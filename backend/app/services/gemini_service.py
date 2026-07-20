@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Load model
-model = genai.GenerativeModel("gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-3.1-flash-lite")
 
 def analyze_resume(resume_text, target_role):
     prompt = f"""

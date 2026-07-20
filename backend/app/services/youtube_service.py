@@ -21,7 +21,7 @@ def search_youtube(skill):
     }
 
     response = requests.get(url, params=params)
-
+    print(response)
     data = response.json()
 
     videos = []
@@ -38,5 +38,5 @@ def search_youtube(skill):
         "published_at": item["snippet"]["publishedAt"],
     }
     )
-
+    print(videos)
     return videos
