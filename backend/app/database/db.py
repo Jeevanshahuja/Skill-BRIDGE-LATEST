@@ -1,10 +1,11 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+import os
+from dotenv import load_dotenv
 
-DATABASE_URL = (
-    "mssql+pyodbc://sa:MySqlServer%402026@localhost:1433/SkillBridge"
-    "?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
-)
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(DATABASE_URL)
 
