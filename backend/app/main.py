@@ -6,7 +6,8 @@ from app.models.user import User
 from app.models.resume import Resume
 from app.models.analysis import ResumeAnalysis
 from app.models.progress import Progress
-
+from app.database.db import Base, engine
+Base.metadata.create_all(bind=engine)
 app = FastAPI(title="SkillBridge API")
 
 app.add_middleware(

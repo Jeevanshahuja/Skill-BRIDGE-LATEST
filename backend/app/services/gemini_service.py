@@ -1,20 +1,69 @@
+
 import os
 import json
 from pathlib import Path
 
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 
+
+# ===========================================================
 # Load .env from backend folder
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+# ===========================================================
 
+load_dotenv(
+    Path(__file__).resolve().parents[2] / ".env",
+    override=True
+)
+
+
+# ===========================================================
 # Configure Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# ===========================================================
 
-# Load model
-model = genai.GenerativeModel("gemini-3.1-flash-lite")
+api_key = os.getenv("GEMINI_API_KEY")
+
+if not api_key:
+    raise RuntimeError("GEMINI_API_KEY is not configured.")
+
+client = genai.Client(api_key=api_key)
+
+MODEL_NAME = "gemini-3.5-flash-lite"
+
+
+# ===========================================================
+# Helper
+# ===========================================================
+
+def _clean_json_response(text: str):
+    """
+    Removes markdown wrappers from Gemini response
+    and converts it into a Python dictionary.
+    """
+
+    text = text.strip()
+
+    if text.startswith("```json"):
+        text = text.replace("```json", "", 1)
+
+    elif text.startswith("```"):
+        text = text.replace("```", "", 1)
+
+    if text.endswith("```"):
+        text = text[:-3]
+
+    text = text.strip()
+
+    return json.loads(text)
+
+
+# ===========================================================
+# EXISTING FEATURE
+# Resume ATS Analysis
+# ===========================================================
 
 def analyze_resume(resume_text, target_role):
+
     prompt = f"""
 You are an expert ATS and resume reviewer.
 
@@ -58,16 +107,56 @@ Resume:
 {resume_text}
 """
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
 
-    text = response.text.strip()
+    return _clean_json_response(response.text)
 
-    if text.startswith("```json"):
-        text = text.replace("```json", "", 1)
 
-    if text.endswith("```"):
-        text = text[:-3]
+# ===========================================================
+# NEW FEATURE
+# Resume vs Job Matching
+# ===========================================================
 
-    text = text.strip()
+def match_resume_to_job(resume_text, job_description):
 
-    return json.loads(text)
+    prompt = f"""
+You are an expert ATS recruiter.
+
+Compare the candidate's resume against the provided job description.
+
+Return ONLY valid JSON.
+
+{{
+    "match_score": 0,
+    "matched_skills": [],
+    "missing_skills": [],
+    "recommendations": [],
+    "summary": ""
+}}
+
+Rules:
+- Return ONLY JSON.
+- No markdown.
+- No explanation outside JSON.
+- Match score must be between 0 and 100.
+- matched_skills should contain 5-15 skills.
+- missing_skills should contain 5-15 skills.
+- recommendations should contain 5 actionable suggestions.
+- summary should be 3-5 concise sentences explaining why the candidate matches (or doesn't).
+
+Job Description:
+{job_description}
+
+Resume:
+{resume_text}
+"""
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
+
+    return _clean_json_response(response.text)

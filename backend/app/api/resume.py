@@ -2,9 +2,11 @@ import os
 import shutil
 import json
 from sqlalchemy import and_
-from fastapi import APIRouter, UploadFile, File, Form, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from app.models.progress import Progress
 from sqlalchemy.orm import Session
+import tempfile
+from app.models.resume_job_match import ResumeJobMatch
 
 from app.database.session import get_db
 from app.models.resume import Resume
@@ -12,10 +14,12 @@ from app.models.analysis import ResumeAnalysis
 from app.utils.pdf_parser import extract_text
 from app.services.gemini_service import analyze_resume
 from app.services.resource_service import get_learning_resources
+from app.models.resume_job_match import ResumeJobMatch
+from app.services.gemini_service import match_resume_to_job
+from app.schemas.resume_schema import JobMatchRequest
+
 
 router = APIRouter(prefix="/resume", tags=["Resume"])
-
-UPLOAD_DIR = "app/uploads/resumes"
 
 
 # ----------------------------
@@ -23,52 +27,71 @@ UPLOAD_DIR = "app/uploads/resumes"
 # ----------------------------
 @router.post("/upload")
 def upload_resume(
-    user_id: int = Form(...),
-    target_role: str = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    target_role: str = Form(...),
+    user_id: int = Form(...),
+    db: Session = Depends(get_db)
 ):
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    temp_path = None
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    try:
+        # Create temporary file only for processing
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".pdf"
+        ) as temp_file:
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+            shutil.copyfileobj(file.file, temp_file)
+            temp_path = temp_file.name
 
-    resume = Resume(
-        UserId=user_id,
-        TargetRole=target_role,
-        FileName=file.filename,
-        FilePath=file_path,
-    )
+        # Extract text from temporary PDF
+        resume_text = extract_text(temp_path)
 
-    db.add(resume)
-    db.commit()
-    db.refresh(resume)
+        # Analyze resume
+        gemini_response = analyze_resume(
+            resume_text,
+            target_role
+        )
 
-    # Extract text
-    resume_text = extract_text(file_path)
+        # Generate learning resources once
+        gemini_response["learning_resources"] = get_learning_resources(
+            gemini_response.get("missing_skills", [])
+        )
 
-    # Gemini analysis
-    gemini_response = analyze_resume(resume_text, target_role)
-    gemini_response["learning_resources"] = get_learning_resources(
-    gemini_response.get("missing_skills", [])
-    )
-    # Save analysis safely
-    analysis = ResumeAnalysis(
-        ResumeId=resume.ResumeId,
-        GeminiResponse=json.dumps(gemini_response, ensure_ascii=False),
-    )
+        # Store resume metadata only
+        resume = Resume(
+            UserId=user_id,
+            TargetRole=target_role,
+            FileName=file.filename,
+            FilePath=None
+        )
 
-    db.add(analysis)
-    db.commit()
+        db.add(resume)
+        db.commit()
+        db.refresh(resume)
 
-    return {
-        "message": "Resume analyzed successfully",
-        "resume_id": resume.ResumeId,
-        "analysis": gemini_response,
-    }
+        # Store analysis/resources
+        analysis = ResumeAnalysis(
+            ResumeId=resume.ResumeId,
+            GeminiResponse=json.dumps(
+                gemini_response,
+                ensure_ascii=False
+            )
+        )
 
+        db.add(analysis)
+        db.commit()
+
+        return {
+            "message": "Resume analyzed successfully",
+            "resume_id": resume.ResumeId,
+            "analysis": gemini_response
+        }
+
+    finally:
+        # Always delete the temporary PDF
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 # ----------------------------
 # Resume History (FIXED)
@@ -227,21 +250,15 @@ def get_resources(resume_id: int, db: Session = Depends(get_db)):
     if not analysis:
         return {"message": "Analysis not found"}
 
-    text = analysis.GeminiResponse.strip()
+    try:
+        analysis_json = json.loads(analysis.GeminiResponse)
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Invalid analysis data"
+        )
 
-    if text.startswith("```json"):
-        text = text.replace("```json", "", 1)
-
-    if text.endswith("```"):
-        text = text[:-3]
-
-    text = text.strip()
-
-    analysis_json = json.loads(text)
-
-    skills = analysis_json.get("missing_skills", [])
-
-    resources = get_learning_resources(skills)
+    resources = analysis_json.get("learning_resources", [])
 
     return {
         "resume_id": resume_id,
@@ -306,3 +323,52 @@ def update_progress(
     db.commit()
 
     return {"message": "updated"}
+
+@router.post("/match")
+def match_resume(
+    request: JobMatchRequest,
+    db: Session = Depends(get_db),
+):
+    # Find resume
+    resume = (
+        db.query(Resume)
+        .filter(Resume.ResumeId == request.ResumeId)
+        .first()
+    )
+
+    if not resume:
+        return {"message": "Resume not found"}
+
+    if not os.path.exists(resume.FilePath):
+        return {"message": "Resume file not found"}
+
+    # Read resume text
+    resume_text = extract_text(resume.FilePath)
+
+    # Gemini job matching
+    result = match_resume_to_job(
+        resume_text,
+        request.JobDescription
+    )
+
+    # Save result
+    match = ResumeJobMatch(
+        UserId=resume.UserId,
+        ResumeId=resume.ResumeId,
+        JobTitle=resume.TargetRole,
+        MatchScore=result["match_score"],
+        MatchedSkills=json.dumps(result["matched_skills"]),
+        MissingSkills=json.dumps(result["missing_skills"]),
+        Recommendations=json.dumps(result["recommendations"]),
+        GeminiResponse=json.dumps(result),
+    )
+
+    db.add(match)
+    db.commit()
+
+    return {
+    "job_description": request.JobDescription,
+    "job_title": request.JobTitle,
+    **result,
+
+}

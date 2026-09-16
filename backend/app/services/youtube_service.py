@@ -4,7 +4,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env",override=True)
 
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 
@@ -21,7 +21,6 @@ def search_youtube(skill):
     }
 
     response = requests.get(url, params=params)
-    print(response)
     data = response.json()
 
     videos = []
@@ -38,5 +37,4 @@ def search_youtube(skill):
         "published_at": item["snippet"]["publishedAt"],
     }
     )
-    print(videos)
     return videos

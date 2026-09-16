@@ -9,5 +9,5 @@ class Resume(Base):
     UserId = Column(Integer, ForeignKey("Users.UserId"), nullable=False)
     TargetRole = Column(String(255), nullable=False)
     FileName = Column(String(255), nullable=False)
-    FilePath = Column(String(500), nullable=False)
+    FilePath = Column(String(500), nullable=True)
     UploadedAt = Column(DateTime, server_default=func.now())
