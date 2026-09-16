@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API = "http://localhost:8000";
+const API = "https://skill-bridge-backend-839758923210.asia-south1.run.app/";
 
 export async function getProgress(resumeId) {
   const res = await axios.get(`${API}/resume/${resumeId}/progress`);
